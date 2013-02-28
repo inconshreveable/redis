@@ -54,6 +54,47 @@ void resetServerSaveParams() {
     server.saveparamslen = 0;
 }
 
+int readFileIntoString(const char *filename, sds *fileText) {
+    long flen;
+    FILE *fp = NULL;
+
+    /* open file */
+    if ((fp = fopen(filename, "r")) == NULL) {
+        goto readFileErr;
+    }
+
+    /* seek in file to determine length */
+    if (fseek(fp, 0, SEEK_END)) {
+        goto readFileErr;
+    }
+
+    if ((flen = ftell(fp)) == -1) {
+        goto readFileErr;
+    }
+
+    if (fseek(fp, 0, SEEK_SET) == -1) {
+        goto readFileErr;
+    }
+
+    /* load entire file into buffer */
+    *fileText = sdsnewlen(NULL, flen);
+    if (fread(*fileText, 1, flen, fp) != flen) {
+        sdsfree(*fileText);
+        goto readFileErr;
+    }
+
+    /* close */
+    if (fclose(fp)) {
+        return 1;
+    }
+
+    return 0;
+
+readFileErr:
+    if (fp) fclose(fp);
+    return 1;
+}
+
 void loadServerConfigFromString(char *config) {
     char *err = NULL;
     int linenum = 0, totlines, i;
@@ -350,6 +391,32 @@ void loadServerConfigFromString(char *config) {
             }
         } else if (!strcasecmp(argv[0],"lua-time-limit") && argc == 2) {
             server.lua_time_limit = strtoll(argv[1],NULL,10);
+        } else if (!strcasecmp(argv[0], "command") && argc == 3) {
+            struct customCommand *cmd = zmalloc(sizeof(struct customCommand));
+            cmd->name = sdsdup(argv[1]);
+            /* normalize command name */
+            sdstolower(sdstrim(cmd->name, " \t\n\r"));
+
+            /* validate command name */
+            for (int i=0; i<sdslen(cmd->name); ++i) {
+                char c = cmd->name[i];
+                if (c < 'a' || c > 'z') {
+                    err = sdscatprintf(sdsempty(),
+                        "Invalid character %c in command '%s', must be all letters.",
+                        c, cmd->name);
+                    goto loaderr;
+                }
+            }
+
+            /* read command script */
+            if (readFileIntoString(argv[2], &cmd->scriptText)) {
+              err = sdscatprintf(sdsempty(),
+                  "Can't read command file: %s", argv[2]);
+              goto loaderr;
+            }
+
+            /* save command for later insertion in command table */
+            listAddNodeTail(server.custom_commands, cmd);
         } else if (!strcasecmp(argv[0],"slowlog-log-slower-than") &&
                    argc == 2)
         {

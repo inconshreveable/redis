@@ -1235,6 +1235,25 @@ void clientCommand(redisClient *c) {
 /* Rewrite the command vector of the client. All the new objects ref count
  * is incremented. The old command vector is freed, and the old objects
  * ref count is decremented. */
+void rewriteClientCommandVectorFromArray(redisClient *c, int argc, robj **argv) {
+    int j;
+
+    /* We free the objects in the original vector at the end, so we are
+     * sure that if the same objects are reused in the new vector the
+     * refcount gets incremented before it gets decremented. */
+    for (j = 0; j < argc; j++) incrRefCount(argv[j]);
+    for (j = 0; j < c->argc; j++) decrRefCount(c->argv[j]);
+    zfree(c->argv);
+    /* Replace argv and argc with our new versions. */
+    c->argv = argv;
+    c->argc = argc;
+    c->cmd = lookupCommand(c->argv[0]->ptr);
+    redisAssertWithInfo(c,NULL,c->cmd != NULL);
+}
+
+/* Rewrite the command vector of the client. All the new objects ref count
+ * is incremented. The old command vector is freed, and the old objects
+ * ref count is decremented. */
 void rewriteClientCommandVector(redisClient *c, int argc, ...) {
     va_list ap;
     int j;
@@ -1247,19 +1266,9 @@ void rewriteClientCommandVector(redisClient *c, int argc, ...) {
         
         a = va_arg(ap, robj*);
         argv[j] = a;
-        incrRefCount(a);
     }
-    /* We free the objects in the original vector at the end, so we are
-     * sure that if the same objects are reused in the new vector the
-     * refcount gets incremented before it gets decremented. */
-    for (j = 0; j < c->argc; j++) decrRefCount(c->argv[j]);
-    zfree(c->argv);
-    /* Replace argv and argc with our new versions. */
-    c->argv = argv;
-    c->argc = argc;
-    c->cmd = lookupCommand(c->argv[0]->ptr);
-    redisAssertWithInfo(c,NULL,c->cmd != NULL);
     va_end(ap);
+    rewriteClientCommandVectorFromArray(c, argc, argv);
 }
 
 /* Rewrite a single item in the command vector.

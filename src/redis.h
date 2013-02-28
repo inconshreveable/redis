@@ -658,6 +658,8 @@ struct redisServer {
     int lua_timedout;     /* True if we reached the time limit for script
                              execution. */
     int lua_kill;         /* Kill the script if true. */
+    list *custom_commands; /* Custom commands */
+
     /* Assert & bug reporting */
     char *assert_failed;
     char *assert_file;
@@ -686,6 +688,12 @@ struct redisCommand {
     int lastkey;  /* The last argument that's a key */
     int keystep;  /* The step between first and last key */
     long long microseconds, calls;
+    void *data; /* command-specific data */
+};
+
+struct customCommand {
+    sds name;
+    sds scriptText;
 };
 
 struct redisFunctionSym {
@@ -803,6 +811,7 @@ void getClientsMaxBuffers(unsigned long *longest_output_list,
                           unsigned long *biggest_input_buffer);
 sds getClientInfoString(redisClient *client);
 sds getAllClientsInfoString(void);
+void rewriteClientCommandVectorFromArray(redisClient *c, int argc, robj **argv);
 void rewriteClientCommandVector(redisClient *c, int argc, ...);
 void rewriteClientCommandArgument(redisClient *c, int i, robj *newval);
 unsigned long getClientOutputBufferMemoryUsage(redisClient *c);
@@ -955,6 +964,7 @@ void usage();
 void updateDictResizePolicy(void);
 int htNeedsResize(dict *dict);
 void oom(const char *msg);
+void installCustomCommands(void);
 void populateCommandTable(void);
 void resetCommandTableStats(void);
 
@@ -1043,6 +1053,7 @@ char *sentinelHandleConfiguration(char **argv, int argc);
 
 /* Scripting */
 void scriptingInit(void);
+int scriptLoad(redisClient *c, robj *script, sds *sha);
 
 /* Git SHA1 */
 char *redisGitSHA1(void);
@@ -1179,6 +1190,7 @@ void objectCommand(redisClient *c);
 void clientCommand(redisClient *c);
 void evalCommand(redisClient *c);
 void evalShaCommand(redisClient *c);
+void customCommand(redisClient *c);
 void scriptCommand(redisClient *c);
 void timeCommand(redisClient *c);
 void bitopCommand(redisClient *c);

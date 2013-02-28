@@ -930,6 +930,21 @@ void evalShaCommand(redisClient *c) {
     evalGenericCommand(c,1);
 }
 
+/* Execute a custom command loaded via the 'command' directive in the
+ * config file. It simply rewrites the command into the appropriate 
+ * evalsha command of the loaded script. 
+ */
+void customCommand(redisClient *c) {
+    int newArgc = c->argc+1;
+    robj **newArgv = zmalloc(newArgc * sizeof(robj *));
+    newArgv[0] = createStringObject("evalsha", 7);
+    /* The SHA is stored in the data field of the command object. */
+    newArgv[1] = createStringObject(c->cmd->data, sdslen(c->cmd->data));
+    memcpy(newArgv+2,c->argv+1, sizeof(robj *) * (c->argc-1));
+    rewriteClientCommandVectorFromArray(c, newArgc, newArgv);
+    evalShaCommand(c);
+}
+
 /* We replace math.random() with our implementation that is not affected
  * by specific libc random() implementations and will output the same sequence
  * (for the same seed) in every arch. */
@@ -969,6 +984,19 @@ int redis_math_randomseed (lua_State *L) {
   return 0;
 }
 
+int scriptLoad(redisClient *c, robj *script, sds *sha) {
+  char funcname[43];
+
+  funcname[0] = 'f';
+  funcname[1] = '_';
+  sha1hex(funcname+2, script->ptr, sdslen(script->ptr));
+  *sha = sdsnewlen(funcname+2,40);
+  if (dictFind(server.lua_scripts,*sha) == NULL) {
+      return luaCreateFunction(c,server.lua,funcname,script);
+  }
+  return REDIS_OK;
+}
+
 /* ---------------------------------------------------------------------------
  * SCRIPT command for script environment introspection and control
  * ------------------------------------------------------------------------- */
@@ -989,21 +1017,10 @@ void scriptCommand(redisClient *c) {
                 addReply(c,shared.czero);
         }
     } else if (c->argc == 3 && !strcasecmp(c->argv[1]->ptr,"load")) {
-        char funcname[43];
         sds sha;
-
-        funcname[0] = 'f';
-        funcname[1] = '_';
-        sha1hex(funcname+2,c->argv[2]->ptr,sdslen(c->argv[2]->ptr));
-        sha = sdsnewlen(funcname+2,40);
-        if (dictFind(server.lua_scripts,sha) == NULL) {
-            if (luaCreateFunction(c,server.lua,funcname,c->argv[2])
-                    == REDIS_ERR) {
-                sdsfree(sha);
-                return;
-            }
+        if (scriptLoad(c, c->argv[2], &sha) == REDIS_OK) {
+          addReplyBulkCBuffer(c,sha,40);
         }
-        addReplyBulkCBuffer(c,funcname+2,40);
         sdsfree(sha);
     } else if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"kill")) {
         if (server.lua_caller == NULL) {
